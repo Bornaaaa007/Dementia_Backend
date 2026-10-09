@@ -22,7 +22,10 @@ app.use(express.json({ limit: '3mb' })); // patient photos are sent as small bas
 
 app.get('/', (req, res) => res.json({ status: 'NestCare API running' }));
 app.get('/api/me', requireAuth, (req, res) => res.json({ user: req.user }));
-
+app.get('/api/users', async (req, res) => {
+  const users = await db.collection('user').find({}, { projection: { password: 0 } }).toArray();
+  res.json({ users });
+});
 // Family / caregiver accounts
 app.use('/api/patients', requireAuth, patientRoutes);
 app.use('/patients', requireAuth, patientRoutes); // same routes without /api, for older screens
