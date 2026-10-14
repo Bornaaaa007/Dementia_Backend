@@ -11,12 +11,18 @@
   "dependencies": {
     "@better-auth/expo": "^1.7.6",
     "@better-auth/mongo-adapter": "^1.7.6",
+    "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
+    "@vladmandic/face-api": "^1.7.15",
     "better-auth": "^1.7.6",
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
+    "expo": "^57.0.27",
+    "expo-constants": "~57.0.21",
     "express": "^5.2.1",
     "mongodb": "^7.7.0",
-    "mongoose": "^8.24.4"
+    "mongoose": "^8.24.4",
+    "sharp": "^0.35.5"
   },
   "type": "module"
 }

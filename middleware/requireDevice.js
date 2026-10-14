@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import Patient from '../models/Patient.js';
+import { verifySession } from '../lib/patientSession.js';
 
 export const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
@@ -17,4 +18,14 @@ export async function requireDevice(req, res, next) {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+}
+
+// Device token AND a recent face check ("X-Patient-Session" header from /face-login)
+export function requireFaceSession(req, res, next) {
+  requireDevice(req, res, () => {
+    if (!verifySession(req.headers['x-patient-session'], req.devicePatient._id)) {
+      return res.status(401).json({ error: 'Please unlock with your face', code: 'FACE_REQUIRED' });
+    }
+    next();
+  });
 }

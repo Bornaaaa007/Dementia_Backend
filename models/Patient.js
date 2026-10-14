@@ -12,6 +12,11 @@ const patientSchema = new mongoose.Schema(
     pairCode: { type: String },                   // the patient's own device uses this
     deviceTokenHash: { type: String, select: false },
     pairedAt: { type: Date },
+
+    // Face unlock: only numeric descriptors are stored, never the photos
+    faceDescriptors: { type: [[Number]], default: [], select: false },
+    faceEnrolledAt: { type: Date },
+    faceConsentAt: { type: Date },
   },
   { timestamps: true }
 );

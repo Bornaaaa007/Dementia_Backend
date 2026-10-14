@@ -2,7 +2,9 @@ import express from 'express';
 import crypto from 'crypto';
 import Patient from '../models/Patient.js';
 import Activity from '../models/Activity.js';
-import { requireDevice, hashToken } from '../middleware/requireDevice.js';
+import { requireDevice, requireFaceSession, hashToken } from '../middleware/requireDevice.js';
+import { getDescriptor, bestDistance, FaceError, THRESHOLD } from '../lib/face.js';
+import { signSession } from '../lib/patientSession.js';
 
 const router = express.Router();
 
@@ -14,6 +16,17 @@ function tooManyAttempts(ip) {
   recent.push(now);
   attempts.set(ip, recent);
   return recent.length > 10;
+}
+
+// failed face matches per patient
+const faceFails = new Map();
+const MAX_FACE_FAILS = 5;
+const FACE_WINDOW = 10 * 60 * 1000;
+function recentFaceFails(id) {
+  const now = Date.now();
+  const list = (faceFails.get(id) || []).filter((t) => now - t < FACE_WINDOW);
+  faceFails.set(id, list);
+  return list;
 }
 
 const publicPatient = (p) => ({ id: String(p._id), name: p.name, photoUrl: p.photoUrl || null });
@@ -35,10 +48,47 @@ router.post('/pair', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Used by the lock screen, before the face check
 router.get('/me', requireDevice, (req, res) => res.json({ patient: publicPatient(req.devicePatient) }));
 
-// "Patient opened the app" signal that feeds the family dashboard (recent activity + stale data)
-router.post('/checkin', requireDevice, async (req, res) => {
+// Face check: compares a live photo with the saved descriptors and, on a match, issues a short session token
+router.post('/face-login', requireDevice, async (req, res) => {
+  const pid = String(req.devicePatient._id);
+  try {
+    if (recentFaceFails(pid).length >= MAX_FACE_FAILS) {
+      return res.status(429).json({ error: 'Too many tries. Please ask your family for help.', code: 'FACE_LOCKED' });
+    }
+
+       const patient = await Patient.findById(pid).select('+faceDescriptors');
+    console.log('[face-login] patient:', pid, patient.name, 'saved faces:', patient.faceDescriptors?.length);
+    if (!patient.faceDescriptors?.length) {
+      return res.status(409).json({ error: "Face unlock isn't set up yet. Please ask your family.", code: 'FACE_NOT_ENROLLED' });
+    }
+
+    const descriptor = await getDescriptor(req.body?.image);
+    const enrolled = patient.faceDescriptors.map((d) => Array.from(d));
+    if (bestDistance(descriptor, enrolled) > THRESHOLD) {
+      const list = recentFaceFails(pid);
+      list.push(Date.now());
+      return res.status(401).json({
+        error: "That doesn't look like you. Let's try again.",
+        code: 'FACE_NO_MATCH',
+        attemptsLeft: Math.max(0, MAX_FACE_FAILS - list.length),
+      });
+    }
+
+    faceFails.delete(pid);
+    const { token, expiresAt } = signSession(pid);
+    res.json({ sessionToken: token, expiresAt });
+  } catch (e) {
+    if (e instanceof FaceError) return res.status(422).json({ error: e.message, code: e.code });
+    console.error('[face] login error:', e.message);
+    res.status(500).json({ error: 'Face check is not available right now' });
+  }
+});
+
+// "Patient opened the app" signal that feeds the family dashboard. Needs the face check.
+router.post('/checkin', requireFaceSession, async (req, res) => {
   try {
     const last = await Activity.findOne({ patient: req.devicePatient._id, type: 'app_open', source: 'patient' }).sort({ at: -1 });
     if (last && Date.now() - last.at.getTime() < 10 * 60 * 1000) return res.json({ ok: true, skipped: true });
