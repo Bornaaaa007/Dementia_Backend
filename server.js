@@ -11,6 +11,7 @@ import patientRoutes from './routes/patients.js';
 import faceRoutes from './routes/face.js';
 import settingsRoutes from './routes/settings.js';
 import deviceRoutes from './routes/device.js';
+import memoryRoutes from './routes/memories.js';
 
 const app = express();
 const requireAuth = makeRequireAuth(auth);
@@ -32,6 +33,7 @@ app.get('/api/me', requireAuth, (req, res) => res.json({ user: req.user }));
 
 // Family / caregiver accounts
 app.use('/api/patients/:id/face', requireAuth, withPatient('owner'), faceRoutes); // before the general patients router
+app.use('/api/patients/:id/memories', requireAuth, memoryRoutes);
 app.use('/api/patients', requireAuth, patientRoutes);
 app.use('/patients', requireAuth, patientRoutes); // same routes without /api, for older screens
 app.use('/api/settings', requireAuth, settingsRoutes);

@@ -5,6 +5,7 @@ import Activity from '../models/Activity.js';
 import { requireDevice, requireFaceSession, hashToken } from '../middleware/requireDevice.js';
 import { getDescriptor, bestDistance, FaceError, THRESHOLD } from '../lib/face.js';
 import { signSession } from '../lib/patientSession.js';
+import Memory from '../models/Memory.js';
 
 const router = express.Router();
 
@@ -96,7 +97,17 @@ router.post('/checkin', requireFaceSession, async (req, res) => {
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
+// Week 5: the patient's device can only READ its own patient's memory cards
+router.get('/memories', requireDevice, async (req, res) => {
+  try {
+    const memories = await Memory.find({ patient: req.devicePatient._id }).collation({ locale: 'en', strength: 2 }).sort({ name: 1 });
+    res.json({
+      memories: memories.map((m) => ({
+        id: String(m._id), name: m.name, relationship: m.relationship, story: m.story || '', photoUrl: m.photoUrl || null,
+      })),
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 router.delete('/unpair', requireDevice, async (req, res) => {
   req.devicePatient.deviceTokenHash = undefined;
   req.devicePatient.pairedAt = undefined;
