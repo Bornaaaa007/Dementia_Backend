@@ -6,6 +6,8 @@ import { requireDevice, requireFaceSession, hashToken } from '../middleware/requ
 import { getDescriptor, bestDistance, FaceError, THRESHOLD } from '../lib/face.js';
 import { signSession } from '../lib/patientSession.js';
 import Memory from '../models/Memory.js';
+import mongoose from 'mongoose';
+import Message from '../models/Message.js';
 
 const router = express.Router();
 
@@ -106,6 +108,56 @@ router.get('/memories', requireDevice, async (req, res) => {
         id: String(m._id), name: m.name, relationship: m.relationship, story: m.story || '', photoUrl: m.photoUrl || null,
       })),
     });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+// Week 6: messages from family (read-only list + "Got it" read state)
+router.get('/messages', requireDevice, async (req, res) => {
+  try {
+    const items = await Message.find({ patient: req.devicePatient._id, kind: 'message' }).sort({ createdAt: -1 }).limit(20);
+    res.json({
+      unread: items.filter((m) => !m.readAt).length,
+      messages: items.map((m) => ({ id: String(m._id), text: m.text, senderName: m.senderName, sentAt: m.createdAt, read: !!m.readAt })),
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/messages/:mid/read', requireDevice, async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.mid)) return res.status(400).json({ error: 'Invalid message id' });
+    // only the first tap changes anything, so repeated taps are harmless
+    const message = await Message.findOneAndUpdate(
+      { _id: req.params.mid, patient: req.devicePatient._id, kind: 'message', readAt: null },
+      { readAt: new Date() },
+      { new: true }
+    );
+    if (message) {
+      await Activity.create({ patient: req.devicePatient._id, type: 'message_read', message: `Read a message from ${message.senderName}`, source: 'patient' });
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Week 6: Compliment & Encouragement Jar. Shows one random note and counts as a light check-in.
+router.post('/jar/reveal', requireDevice, async (req, res) => {
+  try {
+    const pid = req.devicePatient._id;
+    const total = await Message.countDocuments({ patient: pid, kind: 'jar' });
+    if (!total) return res.json({ note: null, total: 0 });
+
+    // avoid showing the same note twice in a row when there is more than one
+    const lastId = mongoose.isValidObjectId(req.body?.lastId) ? new mongoose.Types.ObjectId(req.body.lastId) : null;
+    const match = { patient: pid, kind: 'jar', ...(lastId && total > 1 ? { _id: { $ne: lastId } } : {}) };
+    const [note] = await Message.aggregate([{ $match: match }, { $sample: { size: 1 } }]);
+    if (!note) return res.json({ note: null, total });
+
+    await Message.updateOne({ _id: note._id }, { $inc: { revealCount: 1 }, $set: { lastRevealedAt: new Date() } });
+
+    // one check-in entry per 5 minutes, so tapping "another note" does not flood the activity list
+    const last = await Activity.findOne({ patient: pid, type: 'jar', source: 'patient' }).sort({ at: -1 });
+    if (!last || Date.now() - last.at.getTime() > 5 * 60 * 1000) {
+      await Activity.create({ patient: pid, type: 'jar', message: 'Opened a kind note from the jar', source: 'patient' });
+    }
+    res.json({ note: { id: String(note._id), text: note.text, senderName: note.senderName }, total });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 router.delete('/unpair', requireDevice, async (req, res) => {
