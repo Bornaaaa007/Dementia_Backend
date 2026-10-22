@@ -4,11 +4,11 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import { toNodeHandler } from 'better-auth/node';
 import { memoryAdapter } from 'better-auth/adapters/memory';
-import { createAuth } from '../lib/authConfig.js';
-import { makeRequireAuth } from '../middleware/requireAuth.js';
-import patientRoutes from '../routes/patients.js';
-import settingsRoutes from '../routes/settings.js';
-import deviceRoutes from '../routes/device.js';
+import { createAuth } from '../../lib/authConfig.js';
+import { makeRequireAuth } from '../../middleware/requireAuth.js';
+import patientRoutes from '../../routes/patients.js';
+import settingsRoutes from '../../routes/settings.js';
+import deviceRoutes from '../../routes/device.js';
 
 const PORT = 5098;
 process.env.BETTER_AUTH_SECRET = 'test-secret-test-secret-test-secret-123';

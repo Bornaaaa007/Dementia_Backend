@@ -10,6 +10,11 @@ const reminderSchema = new mongoose.Schema({
   actedAt: { type: Date },
   createdBy: { type: String },
   demo: { type: Boolean, default: false },
+
+  // Week 8: reminders generated from a repeating schedule
+  schedule: { type: mongoose.Schema.Types.ObjectId, ref: 'Schedule', index: true },
+  slotKey: { type: String, index: { unique: true, sparse: true } }, // one reminder per schedule slot
+  consumed: { type: Boolean, default: false },                      // pills already deducted for this dose
 });
 
 export default mongoose.model('Reminder', reminderSchema);

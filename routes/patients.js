@@ -9,6 +9,9 @@ import { withPatient, roleFor } from '../middleware/patientAccess.js';
 import { uniqueCode } from '../lib/codes.js';
 import { buildDashboard } from '../lib/dashboard.js';
 import { buildDemoData } from '../lib/demoData.js';
+import Schedule from '../models/Schedule.js';
+import { afterTaken } from '../lib/schedule.js';
+
 
 const router = express.Router();
 const DAY = 86400000;
@@ -113,7 +116,7 @@ router.put('/:id', withPatient('owner'), async (req, res) => {
 router.delete('/:id', withPatient('owner'), async (req, res) => {
   try {
     const pid = req.patient._id;
-    await Promise.all([Activity.deleteMany({ patient: pid }), Reminder.deleteMany({ patient: pid }), Alert.deleteMany({ patient: pid })]);
+    await Promise.all([Activity.deleteMany({ patient: pid }), Reminder.deleteMany({ patient: pid }), Alert.deleteMany({ patient: pid }), Schedule.deleteMany({ patient: pid })]);
     await req.patient.deleteOne();
     res.json({ message: 'Deleted' });
   } catch (err) { fail(res, err, 500); }
@@ -136,14 +139,15 @@ router.get('/:id/dashboard', withPatient(), async (req, res) => {
     const now = new Date();
     const pid = req.patient._id;
     const tz = Number.isFinite(Number(req.query.tz)) ? Number(req.query.tz) : 0;
-    const [activities, reminders, alerts, settings] = await Promise.all([
+    const [activities, reminders, alerts, settings, schedules] = await Promise.all([
       Activity.find({ patient: pid, at: { $gte: new Date(now - 14 * DAY) } }).sort({ at: -1 }).limit(300).lean(),
       Reminder.find({ patient: pid, scheduledAt: { $gte: new Date(now - 8 * DAY), $lte: new Date(+now + 2 * DAY) } }).lean(),
       Alert.find({ patient: pid, $or: [{ resolvedAt: null }, { raisedAt: { $gte: new Date(now - 7 * DAY) } }] }).lean(),
       CaregiverSettings.findOne({ userId: req.user.id }).lean(),
+      Schedule.find({ patient: pid, active: true }).lean(),
     ]);
     const dashboard = buildDashboard({
-      patient: { name: req.patient.name }, activities, reminders, alerts, settings: settings || {}, now, tzOffsetMinutes: tz,
+    patient: { name: req.patient.name }, activities, reminders, alerts, schedules, settings: settings || {}, now, tzOffsetMinutes: tz,
     });
     res.json({ patient: serialize(req.patient, req.user.id), dashboard });
   } catch (err) { fail(res, err, 500); }
@@ -191,7 +195,8 @@ router.patch('/:id/reminders/:rid', withPatient(), async (req, res) => {
       { status, actedAt: status === 'pending' ? null : new Date() },
       { new: true }
     );
-    if (!reminder) return res.status(404).json({ error: 'Reminder not found' });
+        if (!reminder) return res.status(404).json({ error: 'Reminder not found' });
+    if (status === 'taken') await afterTaken(reminder);
     res.json({ reminder });
   } catch (err) { fail(res, err); }
 });
