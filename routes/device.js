@@ -16,6 +16,11 @@ import Reminder from '../models/Reminder.js';
 import Schedule from '../models/Schedule.js';
 import { MOOD_LABELS, effectiveStatus, localDateKey, localDayStart } from '../lib/dashboard.js';
 import { afterTaken, generateReminders } from '../lib/schedule.js';
+import SosEvent from '../models/SosEvent.js';
+import TrustedContact from '../models/TrustedContact.js';
+import { getSettings } from './safety.js';
+import { readSos } from '../lib/sosInput.js';
+import { withEffectiveStatus, serializeEvent } from '../lib/sosStatus.js';
 
 
 const router = express.Router();
@@ -366,6 +371,101 @@ router.post('/pet/checkin', requireFaceSession, async (req, res) => {
     if (pain === 2) await raise('high_pain', 'warning', `${patient.name} says they have a lot of pain`, 6);
 
     res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+// ================= Week 9: SOS and safety =================
+// IMPORTANT: these routes use requireDevice ONLY, on purpose. If the face check fails or has expired,
+// the patient must still be able to ask for help. Keep them above any router.use(<face check>) line.
+
+const REPEAT_WINDOW_MS = 10 * 60 * 1000; // a second tap within 10 minutes joins the open request
+
+// Contacts + settings for the SOS screen (the app also caches this for offline use)
+router.get('/safety', requireDevice, async (req, res) => {
+  try {
+    const pid = req.devicePatient._id;
+    const [settings, contacts] = await Promise.all([getSettings(pid), TrustedContact.find({ patient: pid }).sort({ createdAt: 1 })]);
+    res.json({
+      shareLocationOnSos: settings.shareLocationOnSos,
+      emergencyNumber: settings.emergencyNumber,
+      contacts: contacts.map((c) => ({ id: String(c._id), name: c.name, phone: c.phone, relationship: c.relationship || '' })),
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/sos', requireDevice, async (req, res) => {
+  try {
+    let input;
+    try { input = readSos(req.body); } catch (e) { return res.status(400).json({ error: e.message }); }
+
+    const patient = req.devicePatient;
+    const pid = patient._id;
+    const settings = await getSettings(pid);
+
+    // Consent is enforced here too: if the family has not switched location sharing on, no location is stored
+    let { type, locationStatus, location } = input;
+    if (!settings.shareLocationOnSos) { locationStatus = 'off'; location = undefined; }
+
+    const describe = (t, loc) => `${patient.name} ${t === 'emergency' ? 'pressed EMERGENCY SOS' : 'asked for help'}${loc ? ' (location shared)' : ''}`;
+
+    // repeat tap: join the request that is already open instead of creating a second one
+    const open = await SosEvent.findOne({
+      patient: pid, status: { $in: ['active', 'acknowledged'] }, createdAt: { $gte: new Date(Date.now() - REPEAT_WINDOW_MS) },
+    }).sort({ createdAt: -1 });
+    if (open) {
+      const [effective] = await withEffectiveStatus([open]);
+      if (effective.status !== 'resolved') {
+        let changed = false;
+        if (type === 'emergency' && open.type === 'help') { open.type = 'emergency'; changed = true; } // escalate, never downgrade
+        if (location && !open.location?.lat) { open.location = location; open.locationStatus = 'shared'; changed = true; }
+        if (changed) {
+          await open.save();
+          if (open.alertId) await Alert.updateOne({ _id: open.alertId }, { severity: 'critical', message: describe(open.type, !!open.location?.lat) });
+        }
+        return res.json({ event: serializeEvent(open), repeat: true });
+      }
+    }
+
+    const alert = await Alert.create({
+      patient: pid, type: 'sos', severity: 'critical', message: describe(type, !!location), raisedAt: new Date(),
+    });
+    const event = await SosEvent.create({
+      patient: pid, type, status: 'active', locationStatus, location, alertId: alert._id,
+      notifiedCount: (patient.members || []).length + 1, // the owner plus every family member who joined
+    });
+    await Activity.create({ patient: pid, type: 'sos', message: type === 'emergency' ? 'Pressed Emergency SOS' : 'Asked for help', source: 'patient' });
+    res.status(201).json({ event: serializeEvent(event), repeat: false });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// The patient's screen polls this to show "your family has seen it"
+router.get('/sos/:id', requireDevice, async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid request id' });
+    const event = await SosEvent.findOne({ _id: req.params.id, patient: req.devicePatient._id });
+    if (!event) return res.status(404).json({ error: 'Request not found' });
+    const [effective] = await withEffectiveStatus([event]);
+    res.json({ event: serializeEvent(effective) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// "I'm OK": the request is cancelled, but the family alert stays open so someone still checks on them
+router.post('/sos/:id/cancel', requireDevice, async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: 'Invalid request id' });
+    const event = await SosEvent.findOne({ _id: req.params.id, patient: req.devicePatient._id });
+    if (!event) return res.status(404).json({ error: 'Request not found' });
+    if (['active', 'acknowledged'].includes(event.status)) {
+      event.status = 'cancelled';
+      event.cancelledAt = new Date();
+      await event.save();
+      if (event.alertId) {
+        await Alert.updateOne({ _id: event.alertId, resolvedAt: null }, {
+          severity: 'warning', message: `${req.devicePatient.name} cancelled the help request and says they are OK. Please check on them.`,
+        });
+      }
+      await Activity.create({ patient: event.patient, type: 'sos', message: 'Cancelled the help request', source: 'patient' });
+    }
+    res.json({ event: serializeEvent(event) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

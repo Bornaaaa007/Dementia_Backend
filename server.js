@@ -18,6 +18,7 @@ import scheduleRoutes from './routes/schedules.js'; // Week 8
 // Week 7 — family-side only (patient-side routes live inside device.js)
 import { jukeboxRouter } from './routes/jukebox.js';
 import { galleryRouter } from './routes/gallery.js';
+import safetyRoutes from './routes/safety.js';
 
 const app = express();
 const requireAuth = makeRequireAuth(auth);
@@ -41,6 +42,7 @@ app.use('/api/patients/:id/messages',  requireAuth, messageRoutes);
 app.use('/api/patients/:id/jukebox',   requireAuth, jukeboxRouter);   // Week 7
 app.use('/api/patients/:id/gallery',   requireAuth, galleryRouter);   // Week 7
 app.use('/api/patients/:id/schedules', requireAuth, withPatient(), scheduleRoutes); // Week 8
+app.use('/api/patients/:id/safety', requireAuth, safetyRoutes);
 app.use('/api/patients',               requireAuth, patientRoutes);
 app.use('/patients',                   requireAuth, patientRoutes);
 app.use('/api/settings',               requireAuth, settingsRoutes);
