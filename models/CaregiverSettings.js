@@ -7,7 +7,7 @@ const settingsSchema = new mongoose.Schema(
     notifyMissedMeds: { type: Boolean, default: true },
     notifyMoodDrops: { type: Boolean, default: true },
     notifyInactivity: { type: Boolean, default: true },
-    notifyLocationAlerts: { type: Boolean, default: true },
+    notifyLocationAlerts: { type: Boolean, default: true }, // "away from the safe area" + "they're safe" notifications
     lastPatientId: { type: String },
   },
   { timestamps: true }

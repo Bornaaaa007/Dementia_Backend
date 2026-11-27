@@ -12,7 +12,7 @@ const wanderSchema = new mongoose.Schema(
     patient: { type: mongoose.Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
     open: { type: Boolean, default: true }, // true while status is active or safe
     status: { type: String, enum: ['active', 'safe', 'returned', 'ended'], default: 'active' },
-    zoneLabel: { type: String, default: 'Home' },
+    zoneLabel: { type: String, default: 'Home' }, // copied, so history still reads correctly if the zone is renamed
     startedAt: { type: Date, default: Date.now },
     startLocation: pointSchema,
     lastLocation: pointSchema,
@@ -20,7 +20,7 @@ const wanderSchema = new mongoose.Schema(
     maxDistanceM: { type: Number, default: 0 },
     alertId: { type: mongoose.Schema.Types.ObjectId, ref: 'Alert' },
 
-    safeBy: { type: String },
+    safeBy: { type: String },     // Better Auth user id
     safeByName: { type: String },
     safeAt: { type: Date },
     safeNote: { type: String, maxlength: 200 },

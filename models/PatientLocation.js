@@ -9,6 +9,7 @@ const locationSchema = new mongoose.Schema(
     lng: { type: Number, required: true },
     accuracy: { type: Number },
     recordedAt: { type: Date, required: true },
+    // consecutive confident readings outside / inside the safe area (stops one bad GPS reading from raising an alert)
     outsideStreak: { type: Number, default: 0 },
     insideStreak: { type: Number, default: 0 },
   },

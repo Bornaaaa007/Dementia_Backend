@@ -12,7 +12,7 @@ import { endOpenEvents } from '../lib/wander.js';
 import { notifyFamily } from '../lib/push.js';
 import { getSettings } from './safety.js';
 
-// Mounted at /api/patients/:id/location
+// Mounted at /api/patients/:id/location  (mergeParams makes :id visible here)
 const router = express.Router({ mergeParams: true });
 
 const fail = (res, err, code = 400) => res.status(code).json({ error: err.message || String(err) });
@@ -45,7 +45,8 @@ const serializeEvent = (e) => ({
   safeUntil: e.status === 'safe' && e.safeAt ? new Date(e.safeAt.getTime() + SAFE_WINDOW_MS) : null,
 });
 
-// Position is only returned while tracking is on, and only to family accounts of this patient.
+// Everything the Location screen needs.
+// The position is only returned while tracking is switched on, and only to family accounts of this patient.
 router.get('/', withPatient(), async (req, res) => {
   try {
     const pid = req.patient._id;
@@ -95,7 +96,7 @@ router.put('/settings', withPatient('owner'), async (req, res) => {
       await endOpenEvents(pid);
       await PatientLocation.deleteOne({ patient: pid }); // switching it off also forgets the last position
     } else if (zoneChanged) {
-      await endOpenEvents(pid);
+      await endOpenEvents(pid); // judge the patient against the new area from the next report
       await PatientLocation.updateOne({ patient: pid }, { $set: { outsideStreak: 0, insideStreak: 0 } });
     }
 
@@ -116,7 +117,7 @@ router.post('/events/:eid/safe', withPatient(), async (req, res) => {
     const who = (req.user.name || 'A family member').slice(0, 80);
     const now = new Date();
 
-    // only one person can win: if two caregivers tap at once, the second is told who got there first
+    // only one person can win: if two caregivers tap at once, the second one is told who got there first
     const event = await WanderEvent.findOneAndUpdate(
       { _id: req.params.eid, patient: pid, open: true, status: 'active' },
       { status: 'safe', safeBy: req.user.id, safeByName: who, safeAt: now, safeNote: note },

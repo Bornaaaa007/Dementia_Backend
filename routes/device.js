@@ -21,8 +21,13 @@ import TrustedContact from '../models/TrustedContact.js';
 import { getSettings } from './safety.js';
 import { readSos } from '../lib/sosInput.js';
 import { withEffectiveStatus, serializeEvent } from '../lib/sosStatus.js';
-import { readPing } from '../lib/locationInput.js';
-import { processPing } from '../lib/wander.js';
+import { readPing, readLocationSettings } from '../lib/locationInput.js';
+import { processPing, endOpenEvents } from '../lib/wander.js';
+import { fetchWalkingRoute } from '../lib/routing.js';
+import { distanceMeters } from '../lib/geofence.js';
+import { notifyFamily } from '../lib/push.js';
+import PatientLocation from '../models/PatientLocation.js';
+import SafetySettings from '../models/SafetySettings.js';
 
 
 const router = express.Router();
@@ -388,7 +393,9 @@ router.get('/safety', requireDevice, async (req, res) => {
     const [settings, contacts] = await Promise.all([getSettings(pid), TrustedContact.find({ patient: pid }).sort({ createdAt: 1 })]);
     res.json({
       shareLocationOnSos: settings.shareLocationOnSos,
-      emergencyNumber: settings.emergencyNumber,trackingEnabled: settings.trackingEnabled,
+      emergencyNumber: settings.emergencyNumber,
+      hasHome: settings.safeZone?.lat != null && settings.safeZone?.lng != null, // only whether home is set, never where it is
+      trackingEnabled: settings.trackingEnabled, // the phone only needs to know whether to report its position (never where "home" is)
       contacts: contacts.map((c) => ({ id: String(c._id), name: c.name, phone: c.phone, relationship: c.relationship || '' })),
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -470,10 +477,10 @@ router.post('/sos/:id/cancel', requireDevice, async (req, res) => {
     res.json({ event: serializeEvent(event) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-// ── Live location: the phone reports its position; the server decides whether to alert ──
-// requireDevice ONLY, on purpose: a background task cannot do a face check,
-// and the safe-area coordinates never leave the server.
-const lastPing = new Map();
+
+// ── Live location (the phone reports its position; the server decides whether to alert) ──
+// requireDevice ONLY, on purpose: a background task cannot do a face check, and the safe-area coordinates never leave the server.
+const lastPing = new Map(); // patient id -> time of the last accepted report
 const MIN_PING_GAP_MS = 10 * 1000;
 
 router.post('/location', requireDevice, async (req, res) => {
@@ -492,6 +499,62 @@ router.post('/location', requireDevice, async (req, res) => {
     await processPing(req.devicePatient, ping, settings);
     res.json({ tracking: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Set the safe area from the patient's own phone (a caregiver standing at home) ──
+// Also needs the patient device code, so the patient cannot move "home" by accident.
+router.post('/safe-zone', requireDevice, async (req, res) => {
+  try {
+    if (tooManyAttempts(req.ip)) return res.status(429).json({ error: 'Too many attempts, try again in a few minutes' });
+    const code = String(req.body?.pairCode || '').trim().toUpperCase();
+    if (!code || req.devicePatient.pairCode !== code) return res.status(403).json({ error: 'That device code is not right' });
+
+    let update;
+    try {
+      update = readLocationSettings({ safeZone: { lat: req.body?.lat, lng: req.body?.lng, radiusM: req.body?.radiusM, label: req.body?.label } });
+    } catch (e) { return res.status(400).json({ error: e.message }); }
+
+    const pid = req.devicePatient._id;
+    await SafetySettings.findOneAndUpdate({ patient: pid }, { $set: { safeZone: update.safeZone }, $setOnInsert: { patient: pid } }, { upsert: true });
+    await endOpenEvents(pid); // judge the patient against the new area from the next report
+    await PatientLocation.updateOne({ patient: pid }, { $set: { outsideStreak: 0, insideStreak: 0 } });
+
+    const settings = await getSettings(pid);
+    res.json({ ok: true, trackingEnabled: settings.trackingEnabled });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── "Take me home": walking directions from where the patient is to the safe area ──
+const lastHomeNotice = new Map(); // patient id -> when the family was last told
+router.post('/route-home', requireDevice, async (req, res) => {
+  try {
+    let from;
+    try { from = readPing(req.body); } catch (e) { return res.status(400).json({ error: e.message }); }
+
+    const patient = req.devicePatient;
+    const settings = await getSettings(patient._id);
+    const zone = settings.safeZone;
+    if (zone?.lat == null || zone?.lng == null) {
+      return res.status(404).json({ error: 'Home has not been set yet. Please ask a family member.', code: 'NO_HOME' });
+    }
+
+    const crowFlies = distanceMeters(from, zone);
+    if (crowFlies <= 30) return res.json({ atHome: true, distanceM: Math.round(crowFlies) });
+
+    // if they are outside the safe area, let the family know they are heading home (at most every 10 minutes)
+    const key = String(patient._id);
+    if (crowFlies > zone.radiusM && Date.now() - (lastHomeNotice.get(key) || 0) > 10 * 60 * 1000) {
+      lastHomeNotice.set(key, Date.now());
+      notifyFamily(patient, {
+        title: `🏠 ${patient.name} is finding the way home`,
+        body: `${patient.name} asked the app for walking directions home.`,
+        data: { type: 'going_home' },
+      }, { preference: 'notifyLocationAlerts' });
+    }
+
+    const route = await fetchWalkingRoute(from, zone);
+    res.json({ atHome: false, ...route });
+  } catch (err) { res.status(502).json({ error: err.message }); }
 });
 
 // ── Unpair ────────────────────────────────────────────────────────────────────

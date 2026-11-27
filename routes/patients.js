@@ -121,8 +121,10 @@ router.put('/:id', withPatient('owner'), async (req, res) => {
 router.delete('/:id', withPatient('owner'), async (req, res) => {
   try {
     const pid = req.patient._id;
-    await Promise.all([Activity.deleteMany({ patient: pid }), Reminder.deleteMany({ patient: pid }), Alert.deleteMany({ patient: pid }), Schedule.deleteMany({ patient: pid }),PatientLocation.deleteMany({ patient: pid }), WanderEvent.deleteMany({ patient: pid }), SafetySettings.deleteMany({ patient: pid }),
-    SosEvent.deleteMany({ patient: pid }), TrustedContact.deleteMany({ patient: pid })]);
+    await Promise.all([Activity.deleteMany({ patient: pid }), Reminder.deleteMany({ patient: pid }), Alert.deleteMany({ patient: pid }), Schedule.deleteMany({ patient: pid }),
+      // safety data holds the home address and positions, so it goes too
+      PatientLocation.deleteMany({ patient: pid }), WanderEvent.deleteMany({ patient: pid }), SafetySettings.deleteMany({ patient: pid }),
+      SosEvent.deleteMany({ patient: pid }), TrustedContact.deleteMany({ patient: pid })]);
     await req.patient.deleteOne();
     res.json({ message: 'Deleted' });
   } catch (err) { fail(res, err, 500); }
