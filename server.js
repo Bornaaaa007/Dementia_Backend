@@ -19,6 +19,8 @@ import scheduleRoutes from './routes/schedules.js'; // Week 8
 import { jukeboxRouter } from './routes/jukebox.js';
 import { galleryRouter } from './routes/gallery.js';
 import safetyRoutes from './routes/safety.js';
+import locationRoutes from './routes/location.js';
+import pushRoutes from './routes/push.js';
 
 const app = express();
 const requireAuth = makeRequireAuth(auth);
@@ -36,6 +38,7 @@ app.get('/', (req, res) => res.json({ status: 'NestCare API running' }));
 app.get('/api/me', requireAuth, (req, res) => res.json({ user: req.user }));
 
 // Family / caregiver routes
+
 app.use('/api/patients/:id/face',      requireAuth, withPatient('owner'), faceRoutes);
 app.use('/api/patients/:id/memories',  requireAuth, memoryRoutes);
 app.use('/api/patients/:id/messages',  requireAuth, messageRoutes);
@@ -43,6 +46,8 @@ app.use('/api/patients/:id/jukebox',   requireAuth, jukeboxRouter);   // Week 7
 app.use('/api/patients/:id/gallery',   requireAuth, galleryRouter);   // Week 7
 app.use('/api/patients/:id/schedules', requireAuth, withPatient(), scheduleRoutes); // Week 8
 app.use('/api/patients/:id/safety', requireAuth, safetyRoutes);
+app.use('/api/patients/:id/location', requireAuth, locationRoutes);
+app.use('/api/push', requireAuth, pushRoutes);
 app.use('/api/patients',               requireAuth, patientRoutes);
 app.use('/patients',                   requireAuth, patientRoutes);
 app.use('/api/settings',               requireAuth, settingsRoutes);

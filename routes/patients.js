@@ -11,6 +11,11 @@ import { buildDashboard } from '../lib/dashboard.js';
 import { buildDemoData } from '../lib/demoData.js';
 import Schedule from '../models/Schedule.js';
 import { afterTaken } from '../lib/schedule.js';
+import PatientLocation from '../models/PatientLocation.js';
+import WanderEvent from '../models/WanderEvent.js';
+import SafetySettings from '../models/SafetySettings.js';
+import SosEvent from '../models/SosEvent.js';
+import TrustedContact from '../models/TrustedContact.js';
 
 
 const router = express.Router();
@@ -116,7 +121,8 @@ router.put('/:id', withPatient('owner'), async (req, res) => {
 router.delete('/:id', withPatient('owner'), async (req, res) => {
   try {
     const pid = req.patient._id;
-    await Promise.all([Activity.deleteMany({ patient: pid }), Reminder.deleteMany({ patient: pid }), Alert.deleteMany({ patient: pid }), Schedule.deleteMany({ patient: pid })]);
+    await Promise.all([Activity.deleteMany({ patient: pid }), Reminder.deleteMany({ patient: pid }), Alert.deleteMany({ patient: pid }), Schedule.deleteMany({ patient: pid }),PatientLocation.deleteMany({ patient: pid }), WanderEvent.deleteMany({ patient: pid }), SafetySettings.deleteMany({ patient: pid }),
+    SosEvent.deleteMany({ patient: pid }), TrustedContact.deleteMany({ patient: pid })]);
     await req.patient.deleteOne();
     res.json({ message: 'Deleted' });
   } catch (err) { fail(res, err, 500); }

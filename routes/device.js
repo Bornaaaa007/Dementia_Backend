@@ -21,6 +21,8 @@ import TrustedContact from '../models/TrustedContact.js';
 import { getSettings } from './safety.js';
 import { readSos } from '../lib/sosInput.js';
 import { withEffectiveStatus, serializeEvent } from '../lib/sosStatus.js';
+import { readPing } from '../lib/locationInput.js';
+import { processPing } from '../lib/wander.js';
 
 
 const router = express.Router();
@@ -386,7 +388,7 @@ router.get('/safety', requireDevice, async (req, res) => {
     const [settings, contacts] = await Promise.all([getSettings(pid), TrustedContact.find({ patient: pid }).sort({ createdAt: 1 })]);
     res.json({
       shareLocationOnSos: settings.shareLocationOnSos,
-      emergencyNumber: settings.emergencyNumber,
+      emergencyNumber: settings.emergencyNumber,trackingEnabled: settings.trackingEnabled,
       contacts: contacts.map((c) => ({ id: String(c._id), name: c.name, phone: c.phone, relationship: c.relationship || '' })),
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -466,6 +468,29 @@ router.post('/sos/:id/cancel', requireDevice, async (req, res) => {
       await Activity.create({ patient: event.patient, type: 'sos', message: 'Cancelled the help request', source: 'patient' });
     }
     res.json({ event: serializeEvent(event) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+// ── Live location: the phone reports its position; the server decides whether to alert ──
+// requireDevice ONLY, on purpose: a background task cannot do a face check,
+// and the safe-area coordinates never leave the server.
+const lastPing = new Map();
+const MIN_PING_GAP_MS = 10 * 1000;
+
+router.post('/location', requireDevice, async (req, res) => {
+  try {
+    let ping;
+    try { ping = readPing(req.body); } catch (e) { return res.status(400).json({ error: e.message }); }
+
+    const pid = String(req.devicePatient._id);
+    const last = lastPing.get(pid) || 0;
+    if (Date.now() - last < MIN_PING_GAP_MS) return res.json({ tracking: true, throttled: true });
+
+    const settings = await getSettings(req.devicePatient._id);
+    if (!settings.trackingEnabled) return res.json({ tracking: false }); // tells the phone to stop reporting
+
+    lastPing.set(pid, Date.now());
+    await processPing(req.devicePatient, ping, settings);
+    res.json({ tracking: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
